@@ -14,6 +14,7 @@ use std::time::Duration;
 use kovanica_crypto::{generate_keypair, KovanicaHasher};
 use kovanica_stratum::config::StratumConfig;
 use kovanica_stratum::gateway::StratumGateway;
+use kovanica_stratum::{KOVANICA_STRATUM_ALGORITHM, KOVANICA_STRATUM_CAPABILITY};
 use kovanica_types::block::{check_pow_hash_meets_target, BlockHeader};
 use kovanica_types::signing::chain_id::HYBRID_TESTNET;
 use kovanica_types::{Address, Hash};
@@ -143,11 +144,14 @@ async fn test_full_stratum_handshake_and_share_submission() {
     assert!(sub_resp["error"].is_null());
 
     let result = sub_resp["result"].as_array().expect("result array");
-    assert_eq!(result.len(), 3);
+    assert_eq!(result.len(), 4);
     let extranonce1 = result[1].as_str().expect("extranonce1 hex");
     let en2_size = result[2].as_u64().expect("extranonce2 size");
     assert!(!extranonce1.is_empty());
     assert_eq!(en2_size, 4);
+    assert_eq!(result[3]["algorithm"], KOVANICA_STRATUM_ALGORITHM);
+    assert_eq!(result[3]["profile"], KOVANICA_STRATUM_CAPABILITY);
+    assert_eq!(result[3]["version"], 1);
 
     // 2. mining.authorize with invalid address syntax (should fail)
     let invalid_auth_req = json!({
@@ -489,7 +493,9 @@ async fn test_gateway_and_builtin_client_hash_and_submit_same_template() {
                 .to_string(),
         )
         .await;
-    let _ = client.read_json().await;
+    let sub_resp = client.read_json().await;
+    let sub_result = sub_resp["result"].as_array().expect("subscribe result");
+    assert_eq!(sub_result[3]["profile"], KOVANICA_STRATUM_CAPABILITY);
 
     let username = format!("{}.rig_01", worker_payout.encode());
     client
@@ -540,6 +546,38 @@ async fn test_gateway_and_builtin_client_hash_and_submit_same_template() {
     let submit_resp = client.read_json().await;
     assert_eq!(submit_resp["result"], true, "share must be accepted");
 
+    // Duplicate share and stale/unknown job must be rejected with the documented codes.
+    let duplicate_params = json!([
+        username,
+        job_id,
+        extranonce2,
+        "00000000",
+        format!("{full_nonce:016x}")
+    ]);
+    client
+        .send_line(
+            &json!({"id": 4, "method": "mining.submit", "params": duplicate_params}).to_string(),
+        )
+        .await;
+    let duplicate_resp = client.read_json().await;
+    assert_eq!(
+        duplicate_resp["error"][0], 22,
+        "duplicate share must be rejected"
+    );
+
+    let stale_params = json!([
+        username,
+        "job_stale",
+        extranonce2,
+        "00000000",
+        format!("{full_nonce:016x}")
+    ]);
+    client
+        .send_line(&json!({"id": 5, "method": "mining.submit", "params": stale_params}).to_string())
+        .await;
+    let stale_resp = client.read_json().await;
+    assert_eq!(stale_resp["error"][0], 21, "unknown job must be rejected");
+
     // The upstream node must receive the reconstructed header with the worker payout and the
     // same full nonce the miner hashed.
     let recorded = timeout(Duration::from_secs(5), async {
@@ -559,6 +597,17 @@ async fn test_gateway_and_builtin_client_hash_and_submit_same_template() {
     .expect("upstream submitWork must be called");
     assert_eq!(recorded.nonce, full_nonce);
     assert_eq!(recorded.payout, Some(worker_payout));
+    assert_eq!(recorded.target_bits, header.target_bits);
+
+    // The simulator must have produced a real KovanicaHash solution over the reconstructed
+    // preimage, not a SHA-256 or otherwise fabricated share.
+    let mut hasher = KovanicaHasher::new();
+    let pow_hash = hasher.hash(&recorded.preimage());
+    assert_eq!(recorded.pow_hash, Some(pow_hash));
+    assert!(
+        check_pow_hash_meets_target(&pow_hash, recorded.target_bits),
+        "submitted header must satisfy the real network target"
+    );
 
     gateway.shutdown();
 }

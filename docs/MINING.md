@@ -321,14 +321,14 @@ Mining pools aggregate hashrate across multiple mining rigs and distribute block
 
 ### Stratum V1 Protocol Mapping
 
-The Stratum pool bridge translates a Stratum V1-style TCP session into Kovanica JSON-RPC calls. The shipped `kovanica-stratum` gateway and the built-in `kovanica-cli` Stratum miner are designed to work together; generic ASIC/GPU Stratum V1 miners are not yet supported because Kovanica headers are not Bitcoin-style 80-byte headers with a coinbase/merkle tree.
+The Stratum pool bridge translates a Stratum V1-style TCP session into Kovanica JSON-RPC calls. The shipped `kovanica-stratum` gateway and the built-in `kovanica-cli` Stratum miner are designed to work together. A third-party miner must implement the `kovanicahash-v1` profile: it must be able to compute KovanicaHash over the canonical DAG-aware preimage and verify the capability advertised in the `mining.subscribe` response. Generic SHA-256 ASIC/GPU Stratum V1 firmware is not supported because Kovanica headers are not Bitcoin-style 80-byte headers with a coinbase/merkle tree.
 
 #### 1. Connection & Subscription (`mining.subscribe`)
 
 The miner connects via TCP and requests session parameters:
 
 ```json
-{"id": 1, "method": "mining.subscribe", "params": ["kovanica-miner/1.0.0"]}
+{"id": 1, "method": "mining.subscribe", "params": ["kovanica-miner/0.4.0", "kovanicahash-v1"]}
 ```
 
 Pool response:
@@ -338,14 +338,16 @@ Pool response:
   "id": 1,
   "result": [
     [["mining.set_difficulty", "session_sub_id"], ["mining.notify", "notify_sub_id"]],
-    "01a4b8", 
-    4
+    "01a4b8",
+    4,
+    {"algorithm": "kovanicahash", "profile": "kovanicahash-v1", "version": 1}
   ],
   "error": null
 }
 ```
 - `01a4b8`: Allocated `extranonce1` (assigned uniquely per client connection).
 - `4`: `extranonce2_size` in bytes.
+- The fourth result element advertises the required algorithm and profile. A miner that cannot evaluate KovanicaHash must disconnect instead of sending unusable shares. Legacy gateways without this field are still accepted by the built-in client.
 
 #### 2. Worker Authorization (`mining.authorize`)
 

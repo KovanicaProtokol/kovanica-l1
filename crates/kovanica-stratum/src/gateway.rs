@@ -19,6 +19,7 @@ use crate::job::{Job, JobManager};
 use crate::protocol::{StratumNotification, StratumRequest, StratumResponse};
 use crate::rpc::NodeRpcClient;
 use crate::session::{parse_and_validate_username, SessionRegistry, WorkerSession};
+use crate::{KOVANICA_STRATUM_ALGORITHM, KOVANICA_STRATUM_CAPABILITY};
 
 /// Channel message to send to a connected client TCP stream.
 type ClientSender = mpsc::UnboundedSender<String>;
@@ -295,7 +296,12 @@ impl StratumGateway {
                                 ["mining.notify", session.session_id.clone()]
                             ],
                             session.extranonce1.clone(),
-                            session.extranonce2_size
+                            session.extranonce2_size,
+                            {
+                                "algorithm": KOVANICA_STRATUM_ALGORITHM,
+                                "profile": KOVANICA_STRATUM_CAPABILITY,
+                                "version": 1
+                            }
                         ]),
                     );
                     let _ = outbound_tx.send(sub_response.to_wire_line());

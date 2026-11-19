@@ -70,6 +70,7 @@ Use the five-parameter form: `[username, job_id, extranonce2, ntime, nonce]`. Th
 
 - A KovanicaHash-capable miner simulator (not a generic SHA-256 miner) completes subscribe → authorize → notify → submit against `kovanica-stratum` and produces a header accepted by `kovanica_submitWork`.
 - The test asserts the submitted header's nonce, payout, target bits, and PoW hash, and covers duplicate/short-job rejection.
+- The subscribe handshake advertises and verifies the `kovanicahash-v1` profile; the built-in client rejects a mismatched profile.
 - `docs/MINING.md` lists the required miner capability explicitly and does not describe generic ASIC/GPU support.
 
 ### Path B — Consensus/PoW change (not recommended)
@@ -90,7 +91,7 @@ A proxy could let generic miners submit SHA-256 shares while the operator separa
 ## 6. Open questions
 
 1. Is there an existing GPU/FPGA miner that can implement KovanicaHash with its 2 MiB scratchpad, or must one be written?
-2. Should the gateway advertise a capability/version string during `mining.subscribe` so incompatible miners fail fast?
+2. **Resolved:** the gateway advertises `{"algorithm":"kovanicahash","profile":"kovanicahash-v1","version":1}` as the fourth `mining.subscribe` result element, and the built-in client sends/verifies the `kovanicahash-v1` token. Miners that cannot evaluate KovanicaHash must reject a mismatched profile; legacy responses without the field remain accepted for backwards compatibility.
 3. How should variable difficulty be assigned once real hashrate is measurable? Current behavior accepts miner-suggested difficulty, which is not safe for a public pool.
 4. Where should share accounting and payout state live if the pool becomes multi-user? Current counters are in-memory statistics only.
 5. Should `kovanica_getWork` gain a Stratum-specific template mode, or is the current full-header template sufficient for Path A?

@@ -22,6 +22,11 @@ use tracing::{error, info, warn};
 
 use crate::miner::{format_hashrate, MiningStats};
 
+/// PoW algorithm required by the Kovanica Stratum V1 job profile.
+const KOVANICA_STRATUM_ALGORITHM: &str = "kovanicahash";
+/// Capability token advertised by Kovanica-compatible gateways during `mining.subscribe`.
+const KOVANICA_STRATUM_CAPABILITY: &str = "kovanicahash-v1";
+
 /// Stratum share submission message sent from worker threads.
 #[derive(Debug, Clone)]
 pub struct StratumShare {
@@ -139,7 +144,7 @@ impl StratumMiner {
         let subscribe_req = json!({
             "id": 1,
             "method": "mining.subscribe",
-            "params": ["kovanica-miner/0.3.0"]
+            "params": ["kovanica-miner/0.4.0", KOVANICA_STRATUM_CAPABILITY]
         });
         write_half
             .write_all(format!("{}\n", subscribe_req).as_bytes())
@@ -158,6 +163,7 @@ impl StratumMiner {
         if !sub_resp.get("error").is_none_or(|v| v.is_null()) {
             anyhow::bail!("Stratum pool rejected subscribe: {:?}", sub_resp["error"]);
         }
+        Self::verify_subscribe_capability(&sub_resp)?;
 
         let mut extranonce1 = String::new();
         let mut extranonce2_size = 4usize;
@@ -468,6 +474,39 @@ impl StratumMiner {
         Ok(())
     }
 
+    /// Verify that the gateway advertises the KovanicaHash job profile.
+    ///
+    /// Legacy gateways that omit the capability field are accepted with a warning so that
+    /// miners from the built-in-profile release remain compatible.
+    fn verify_subscribe_capability(resp: &Value) -> Result<()> {
+        let Some(result) = resp.get("result").and_then(Value::as_array) else {
+            return Ok(());
+        };
+        let Some(capability) = result.get(3) else {
+            warn!(
+                "gateway did not advertise a Stratum capability; assuming legacy Kovanica profile"
+            );
+            return Ok(());
+        };
+
+        let algorithm = capability
+            .get("algorithm")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let profile = capability
+            .get("profile")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        if algorithm == KOVANICA_STRATUM_ALGORITHM && profile == KOVANICA_STRATUM_CAPABILITY {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "Stratum gateway does not support the required {KOVANICA_STRATUM_CAPABILITY} profile (algorithm={algorithm}, profile={profile})"
+        )
+    }
+
     /// Convert Stratum difficulty factor into a 256-bit big-endian target array.
     ///
     /// This matches `kovanica_stratum::difficulty::target_from_difficulty`: difficulty 1 is the
@@ -628,5 +667,53 @@ mod tests {
         assert_eq!(&job.preimage[prefix.len()..], &[0u8; 8]);
         assert_eq!(job.ntime, 0x673a5f20);
         assert_eq!(job.network_target, network_target);
+    }
+
+    #[test]
+    fn subscribe_capability_accepts_kovanica_profile() {
+        let resp = json!({
+            "id": 1,
+            "result": [
+                [],
+                "00000001",
+                4,
+                {
+                    "algorithm": "kovanicahash",
+                    "profile": "kovanicahash-v1",
+                    "version": 1
+                }
+            ],
+            "error": null
+        });
+        assert!(StratumMiner::verify_subscribe_capability(&resp).is_ok());
+    }
+
+    #[test]
+    fn subscribe_capability_rejects_incompatible_profile() {
+        let resp = json!({
+            "id": 1,
+            "result": [
+                [],
+                "00000001",
+                4,
+                {
+                    "algorithm": "sha256d",
+                    "profile": "bitcoin-v1",
+                    "version": 1
+                }
+            ],
+            "error": null
+        });
+        assert!(StratumMiner::verify_subscribe_capability(&resp).is_err());
+    }
+
+    #[test]
+    fn subscribe_capability_allows_legacy_gateway() {
+        let resp = json!({
+            "id": 1,
+            "result": [[], "00000001", 4],
+            "error": null
+        });
+        assert!(StratumMiner::verify_subscribe_capability(&resp).is_ok());
     }
 }

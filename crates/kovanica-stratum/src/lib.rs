@@ -4,6 +4,15 @@
 //! Kovanica full node JSON-RPC endpoint (`kovanica_getWork` / `kovanica_submitWork`), per
 //! `docs/MINING.md` Section 5.
 
+/// PoW algorithm required by the Kovanica Stratum V1 job profile.
+pub const KOVANICA_STRATUM_ALGORITHM: &str = "kovanicahash";
+
+/// Capability token advertised during `mining.subscribe` for the Kovanica job profile.
+///
+/// A miner must be able to evaluate KovanicaHash and reconstruct the canonical DAG-aware
+/// preimage before it can produce shares that the gateway can convert into valid blocks.
+pub const KOVANICA_STRATUM_CAPABILITY: &str = "kovanicahash-v1";
+
 pub mod config;
 pub mod difficulty;
 pub mod gateway;
